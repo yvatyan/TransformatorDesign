@@ -8,6 +8,10 @@ enum material {
     Cu,
     Fe
 }
+enum packType {
+    quadratic,
+    compact
+}
 
 struct Box {
     double height;
@@ -53,7 +57,12 @@ double wire_resistance (double length, double diameter, material metal) { // m, 
     return metal_resistivity(metal)*length/S; 
 }
 
-double coil_inductivity (double wireLength, double wireDiameter, Box coilSize, material coreMetal) { // m, m, m x m x m -> H
+double winding (double wireLength, double wireDiameter, Box coreSize, packType packing) { // m, m, m x m x m -> count
+    double k = coreSize.height/wireDiameter; 
+    
+}
+
+double coil_inductivity (double wireLength, double wireDiameter, Box coreSize, material coreMetal) { // m, m, m x m x m -> H
 
 }
 
