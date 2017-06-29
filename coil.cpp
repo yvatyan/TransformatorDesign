@@ -181,7 +181,7 @@ namespace CoilCalculation {
     };
     class Wire {
        public:
-            Wire(ElectricalEnvironment* e, double len, double metalD, double isolatedD, Material m);
+            Wire(ElectricalEnvironment* e, double lenOrRes, double metalD, double isolatedD, Material m, bool isLength = true);
 
             double   Length()                 		    const;  // m
             double   MetalDiameter()          		    const;  // m
@@ -196,10 +196,11 @@ namespace CoilCalculation {
             Material Metal()                  		    const;
         private:
             ElectricalEnvironment* env;
-            double            length;
             double            metalDiameter;
             double            isolatedDiameter;
             Material          metal;
+    mutable double            length;
+    	    double	      resistance;
     };
     class Coil {
         public:
@@ -211,13 +212,13 @@ namespace CoilCalculation {
             Coil(ElectricalEnvironment* e, Wire w, PackingType pack, BoxBody core);
             ~Coil();
 
-            size_t      Turns()            const;
-            size_t      Layers()           const;
-            double      WindingThickness() const;
+            size_t      Turns()            const; // count
+            size_t      Layers()           const; // count
+            double      WindingThickness() const; // m
             PackingType Packing()          const;
             Material    CoreMaterial()     const;
-            double      Inductivity()      const;
-            double      Resistance()       const;
+            double      Inductivity()      const; // H
+            double      Resistance()       const; // Ohm
         private:
             struct WindingParams {
                 size_t turns;
@@ -285,28 +286,28 @@ double Material::Resistivity() const {
     switch(type) {
         case Cu :   return 1.68e-8;
         case Fe :   return 9.71e-8;
-        default :   return -1;
+        default :   return -1.;
     };
 }
 double Material::HeatingCapacity() const {
     switch(type) {
         case Cu :   return 385;
         case Fe :   return 444;
-        default :   return -1;
+        default :   return -1.;
     };
 }
 double Material::Permeability() const {
     switch(type) {
         case Cu :   return 1.26e-6;
         case Fe :   return 6.30e-3;
-        default :   return -1;
+        default :   return -1.;
     };
 }
 double Material::MeltingPoint() const {
      switch(type) {
         case Cu :   return 1356.55;
         case Fe :   return 1812.15;
-        default :   return false;
+        default :   return -1.;
     };
 }
 bool Material::IsMetal() const {
@@ -402,14 +403,21 @@ double CylindricBody::BasePerimeterStretchedBy(double radiusAmount) const {
     return BasePerimeter() + 2*constants::pi*radiusAmount;
 }
 /****************************** class Wire ******************************/
-Wire::Wire(ElectricalEnvironment* e, double len, double metalD, double isolatedD, Material m)
+Wire::Wire(ElectricalEnvironment* e, double lenOrRes, double metalD, double isolatedD, Material m, bool isLength)
 {
     if (m.IsMetal()) {
         env = e;
-        length = len;
         metalDiameter = metalD;
         isolatedDiameter = isolatedD;
 	metal = m;
+	if(isLength) {
+            length = lenOrRes;
+	    resistance = metal.Resistivity()*length/CutArea(false);
+	} else {
+	    resistance = lenOrRes;
+	    length = resistance*CutArea(false)/metal.Resistivity();
+	}
+    } else {									// TODO: Do smth if wire material is not metal
     }
 }
 double Wire::Length() const {
@@ -428,14 +436,25 @@ double Wire::Mass(bool treatIsolationAsMetal) const {
     return CutArea(!treatIsolationAsMetal)*length*metal.Density();
 }
 double Wire::Resistance() const {
-    return metal.Resistivity()*length/CutArea(false);
+    return resistance;
 }
 double Wire::Heating() const {
     return Resistance()*SQR(env->Current());
 }
 double Wire::TimeToMelt() const {
+    //
+    // Approximations
+    // [1]. It is considered that wire is not cooled, all heat remains in it
+    // [2]. Isolation damage is not taken into account
+    // [3]. Considered taht isolation has tha same heating capacity that metal has
+    // [4]. dm heating part is taken as cylinder, but it seems that the volume that is heated is like two cones
+    //
     double dm = CutArea()*IsolatedDiameter()*metal.Density();
-    return metal.HeatingCapacity()*(metal.MeltingPoint() - env->Temperature())*dm/Heating();
+    double tmp = length;
+    length = IsolatedDiameter();
+    double dQ = Heating();
+    length = tmp;
+    return metal.HeatingCapacity()*(metal.MeltingPoint() - env->Temperature())*dm/dQ;
 }
 Material Wire::Metal() const {
     return metal;
@@ -481,7 +500,7 @@ double Coil::Inductivity() const {
     return inductivity;
 }
 double Coil::Resistance() const {
-    return wire.Resistance() + env->Frequancy()*Inductivity();
+    return sqrt(SQR(wire.Resistance()) + SQR(2*constants::pi*env->Frequancy()*Inductivity()));
 }
 double Coil::stretchAmount(double layer_iter) const {
    switch(packing) {
@@ -518,10 +537,10 @@ void Coil::winding() {
         turns = (wire.Length() - winded)/turn_perimeter;
         winded += turn_perimeter*full_layer_turns;
         /** Inductivity **/
-        double curr_turn_radius = 0., turn_radius = coreBody->BaseExcircleRadius() + stretchAmount(layer_iter);     // TODO: Do smth with rectangles
+        double curr_turn_radius = 0., turn_radius = coreBody->BaseExcircleRadius() + stretchAmount(layer_iter);     // TODO: Do smth with rectangles (how to get turn_radius) 
         double curr_distance = 0.;
         for(size_t t = 1; t < ( turns > full_layer_turns ? full_layer_turns : turns); ++t) {                        // TODO: Optimaze twice as turns are same in right and left sides
-            inductivity += (turns - t)*turnInductivity(t*wire.IsolatedDiameter(), turn_radius);                     // inductivity between current layers' turns
+            inductivity += (turns - t)*turnInductivity(t*wire.IsolatedDiameter(), turn_radius);                     // Hint: inductivity between current layers' turns
             for(size_t l = layer_iter-1; l > 0; --l) {
                 curr_turn_radius = coreBody->BaseExcircleRadius() + stretchAmount(l);
                 for(size_t prev_t = 0; prev_t < full_layer_turns; ++prev_t) {
@@ -571,6 +590,32 @@ void __test() {
 
 
 int main() {
-	__test();
+	
+	double primary_voltage = 220;
+	double primary_current = 8;
+	double secondary_voltage = 30;
+	double k = primary_voltage/secondary_voltage;
+
+	ElectricalEnvironment envPrimary;
+	envPrimary.SetVoltage(primary_voltage);
+	envPrimary.SetFrequancy(50);
+	envPrimary.SetTemperature(aux::CtK(20));
+
+	BoxBody core(.03, .02, .02, Material::Fe);
+	Wire wire(&envPrimary, 30, .00051, .00057, Material::Cu);
+	Coil coil(&envPrimary, wire, Coil::Compact, core);
+
+	std::cout << "Winding turns    : " << coil.Turns() << std::endl;
+	std::cout << "Winding layers   : " << coil.Layers() << std::endl;
+	std::cout << "Winding thickness: " << coil.WindingThickness() << std::endl;
+	std::cout << "!!! Inductivity  : " << coil.Inductivity() << std::endl;
+	envPrimary.SetCurrent(primary_voltage / coil.Resistance());
+	std::cout << "Coil Resistance  : " << coil.Resistance() << std::endl; 
+	std::cout << "Wire Resistance  : " << wire.Resistance() << std::endl; 
+	std::cout << "Wire Heating     : " << wire.Heating() << std::endl;
+	std::cout << "Time to Melt     : " << wire.TimeToMelt() << std::endl;
+	std::cout << "Actual current   : " << primary_voltage / wire.Resistance() << std::endl;
+	std::cout << "Actual current 2 : " << primary_voltage / coil.Resistance() << std::endl;
+
 	return 0;
 }
