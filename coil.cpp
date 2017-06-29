@@ -489,35 +489,44 @@ double Coil::stretchAmount(double layer_iter) const {
        case Compact   :    return (layer_iter-1)*wire.IsolatedDiameter()*constants::sqrt3/2.;
    };
 }
+/*********************** Results comparing with http://coil32.ru/calc/multi-layer.html ***********************/
+// ____________________________________________________________________________________________________________
+//  Property |   Value on web   |       Value local      |   Deviation  |      Value local      |   Deviation
+//           |                  |   (quadratic packing)  |              |   (compact packing)   |
+// ----------+------------------+------------------------+--------------+-----------------------+---------------
+//     L     |        10 H      |         12.6235 H      |    +2.6235   |       13.0414 H       |     +3.0414
+//     R     |     544.84 Ohm   |        523.042 Ohm     |    -21.798   |      523.042 Ohm      |     -21.798 
+// thickness |        75 mm     |           75 mm        |       0      |        67.7 mm        |      -7.3
+//   turns   |       11158      |           11202        |      +44     |         11681         |      +523
+//   layers  |        75        |            75          |       0      |           78          |       +3
+// -------------------------------------------------------------------------------------------------------------
+// ::INITIAL VALUES::
+//   height  =      15 cm
+//   r_base  =       5 cm
+//   r_iso   =       1 mm
+//   r_met   =     0.5 mm
+//  w_length = 6113.04 m
+//
 void Coil::winding() {
     double full_layer_turns = coreBody->Height()/wire.IsolatedDiameter();
     double winded = 0.;
     double turns = 0., turn_perimeter = 0.;  
     unsigned int layer_iter = 0.;
-    unsigned int iters = 0;
     while ( wire.Length() > winded ) {
         ++layer_iter;
-	++iters;
         turn_perimeter = coreBody->BasePerimeterStretchedBy(stretchAmount(layer_iter));
         turns = (wire.Length() - winded)/turn_perimeter;
         winded += turn_perimeter*full_layer_turns;
         /** Inductivity **/
         double curr_turn_radius = 0., turn_radius = coreBody->BaseExcircleRadius() + stretchAmount(layer_iter);     // TODO: Do smth with rectangles
         double curr_distance = 0.;
-	std::cout << "Turns on " << layer_iter << "layer - " << ( turns > full_layer_turns ? full_layer_turns : turns) << std::endl;
-	std::cout << "\t\t\tIterations pass: " << iters << std::endl;
-        for(size_t t = 1; t < ( turns > full_layer_turns ? full_layer_turns : turns); ++t) {
-++iters;
-            inductivity += (turns - t)*turnInductivity(t*wire.IsolatedDiameter(), turn_radius);                      // inductivity between current layers' turns
-iters += 100;
+        for(size_t t = 1; t < ( turns > full_layer_turns ? full_layer_turns : turns); ++t) {                        // TODO: Optimaze twice as turns are same in right and left sides
+            inductivity += (turns - t)*turnInductivity(t*wire.IsolatedDiameter(), turn_radius);                     // inductivity between current layers' turns
             for(size_t l = layer_iter-1; l > 0; --l) {
-++iters;
                 curr_turn_radius = coreBody->BaseExcircleRadius() + stretchAmount(l);
                 for(size_t prev_t = 0; prev_t < full_layer_turns; ++prev_t) {
-++iters;
-                    curr_distance = std::abs(t - prev_t)*wire.IsolatedDiameter();
+                    curr_distance = (t - prev_t > 0 ? t - prev_t : prev_t - t)*wire.IsolatedDiameter();
                     inductivity += turnInductivity(curr_distance, curr_turn_radius, turn_radius);
-iters+=100;
                 }
             }
         }
@@ -549,9 +558,9 @@ using namespace CoilCalculation;
 
 void __test() {
 	ElectricalEnvironment env;
-	CylindricBody core(.1, .05, Material::Fe);
-	Wire wire(&env, 5164.97, .0005, .0005, Material::Cu);
-	Coil coil(&env, wire, Coil::Quadratic, core);
+	CylindricBody core(.15, .05, Material::Fe);
+	Wire wire(&env, 6113.04, .0005, .001, Material::Cu);
+	Coil coil(&env, wire, Coil::Compact, core);
 
 	std::cout << "Winding turns    : " << coil.Turns() << std::endl;
 	std::cout << "Winding layers   : " << coil.Layers() << std::endl;
